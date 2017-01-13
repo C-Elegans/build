@@ -1,0 +1,5 @@
+build/*
+dist/*
+vbuild.egg-info/*
+**/*.pyc
+**/.*.swp
