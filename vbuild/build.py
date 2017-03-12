@@ -47,7 +47,9 @@ def files_newer_than(mtime, files):
             print fstrip
             return False
     return True
-
+buildcommand = """
+yosys -p "synth_ice40 -abc2 -blif {0}" {1}
+"""
 def build():
     """vbuild build file.v will look at the first line of the file,
     if it contains // deps: x.v, y.v, z.v it will pass those files to yosys too,
@@ -59,8 +61,8 @@ def build():
     deps = convert(extract_deps(fname))
     rawfile = os.path.splitext(fname)[0]
     outputfile = rawfile + ".blif"
-    command = ["yosys", "-q", "-p", '"synth_ice40 -blif ' + outputfile+'"'] + deps
-    os.system(" ".join(command))
+    command = buildcommand.format(outputfile," ".join(deps))
+    os.system(command)
     pnrcommand = ["arachne-pnr","-q","-p",rawfile + ".pcf", outputfile, "-o", rawfile + ".txt"]
     os.system(" ".join(pnrcommand))
     icepackcmd = ["icepack", rawfile + ".txt", rawfile + ".bin"]
@@ -72,7 +74,7 @@ def install():
     fname = sys.argv[2]
     rawname = os.path.splitext(fname)[0]
     if os.path.isfile(rawname + ".bin"):
-        mtime = os.path.mtime(rawname + ".bin")
+        mtime = os.path.getmtime(rawname + ".bin")
         if files_newer_than(mtime,convert(extract_deps(fname))):
             pass
         else:
@@ -91,16 +93,20 @@ def test():
     fname = sys.argv[2] 
     rawname = os.path.splitext(fname)[0]
     deps = convert(extract_deps(fname))
-    testcmd = ["iverilog", "-Wall", "-o", rawname + ".iv"] + deps
-    os.system(" ".join(testcmd))
-    os.system("vvp " +rawname + ".iv")
-    os.system("rm "+rawname+".iv")
+    testcmd = ["iverilog", "-Wall","-D SIMULATION", "-o", rawname + ".iv"] + deps
+    if os.system(" ".join(testcmd)) == 0 and \
+        os.system("vvp " +rawname + ".iv") == 0 and \
+        os.system("rm "+rawname+".iv") == 0:
+            print "Test Succeeded!"
+    else:
+        print "Test FAILURE"
+        sys.exit(1)
 
 formalcmd = """
 read_verilog -formal {0}
 prep -top {1}
 flatten
-sat -prove-asserts -set-assumes -show-public -tempinduct -verify -set-assumes -dump_vcd {1}.vcd
+sat -ignore_unknown_cells -prove-asserts -set-assumes -show-ports -tempinduct -verify -set-assumes -dump_vcd {1}.vcd
 """
 def formal():
     if len(sys.argv) != 3:
@@ -108,11 +114,16 @@ def formal():
     fname = sys.argv[2]
     rawname = os.path.splitext(fname)[0]
     deps = convert(extract_deps(fname))
-    os.system("echo '" + formalcmd.format(fname,rawname) +"' | yosys ")  
+    if os.system("echo '" + formalcmd.format(" ".join(deps),rawname) +"' | yosys ") == 0:
+        print "Test PASSED"
+    else:
+        print "Test FAILED"
+        sys.exit(1)
 
 smtcmd = """
 read_verilog -formal {0}
 prep -top {1}
+memory -nordff
 write_smt2 {1}.smt2"""
 def smt2():
     if len(sys.argv) != 4:
@@ -121,10 +132,16 @@ def smt2():
     fname = sys.argv[2]
     rawname = os.path.splitext(fname)[0]
     deps = convert(extract_deps(fname))
-    os.system("echo '" + smtcmd.format(fname,rawname) +"' | yosys -q")  
-    ret = os.system("yosys-smtbmc -s {0} {1}.smt2".format(solver,rawname))
-    if ret == 0:
-        os.system("yosys-smtbmc -i -s {0} {1}.smt2".format(solver,rawname))
+    os.system("echo '" + smtcmd.format(" ".join(deps),rawname) +"' | yosys -q")  
+    if os.system("yosys-smtbmc -t 7 -s {0} {1}.smt2".format(solver,rawname)) == 0 and \
+        os.system("yosys-smtbmc -t 7 -i -s {0} {1}.smt2".format(solver,rawname)) == 0 and \
+        os.system("yosys-smtbmc -t 7 -c -s {0} {1}.smt2".format(solver,rawname)) == 0:
+            print "Test PASSED"
+    else:
+        print "Test FAILED"
+        sys.exit(1)
+
+
 
 
 def main():
